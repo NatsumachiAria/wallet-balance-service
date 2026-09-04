@@ -65,6 +65,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Test debugging to find error from OIDC
+      - name: Debug OIDC inputs
+        run: |
+          echo "role: '${{ vars.AWS_ROLE_ARN }}'"
+          echo "repo: ${{ github.repository }}"
+          echo "ref:  ${{ github.ref }}"
+
       # No access keys are stored anywhere. GitHub mints a short-lived
       # token, AWS validates it against the OIDC provider and the trust
       # policy, and returns temporary credentials scoped to this role.
