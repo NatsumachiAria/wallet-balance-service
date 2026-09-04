@@ -61,4 +61,8 @@ bastion_instance_type = "t3.micro"
 # =====================================================================
 # CI/CD IAM — iam.tf
 # =====================================================================
-github_repo = "NatsumachiAria/wallet-balance-service"
+github_owner     = "NatsumachiAria"
+github_repo_name = "wallet-balance-service"
+github_branch    = "main"
+
+#github_repo = "NatsumachiAria/wallet-balance-service"

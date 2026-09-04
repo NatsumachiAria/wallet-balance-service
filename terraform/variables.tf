@@ -143,8 +143,22 @@ variable "bastion_instance_type" {
 # =====================================================================
 # CI/CD IAM — iam.tf
 # =====================================================================
-
-variable "github_repo" {
-  description = "owner/repo. Pins the OIDC trust policy to this repository."
+variable "github_owner" {
+  description = "GitHub account that owns the repository"
   type        = string
 }
+
+variable "github_repo_name" {
+  description = "Repository name, without the owner prefix"
+  type        = string
+}
+
+variable "github_branch" {
+  description = "Only this branch may assume the deploy role"
+  type        = string
+}
+
+/* variable "github_repo" {
+  description = "owner/repo. Pins the OIDC trust policy to this repository."
+  type        = string
+} */

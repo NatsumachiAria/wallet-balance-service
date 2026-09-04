@@ -112,11 +112,24 @@ data "aws_iam_policy_document" "github_assume" {
       values   = ["sts.amazonaws.com"]
     }
 
-    condition {
-      test     = "StringEquals"
+    /* condition {
+      test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:ref:refs/heads/main"]
+      values   = ["repo:${var.github_repo}@*:ref:refs/heads/main"]
+    } */
+
+    # GitHub appends an immutable numeric id to both the owner and the
+    # repository name in the subject claim — for example
+    #   repo:owner@73279182/repo@1356771410:ref:refs/heads/main
+    # so that renaming a repository cannot inherit the old name's trust.
+    # The wildcards cover only those ids. The branch is still matched
+    # exactly, so a fork or any other branch cannot assume this role.
+    condition {
+      test     = "StringLike"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = ["repo:${var.github_owner}*/${var.github_repo_name}*:ref:refs/heads/${var.github_branch}"]
     }
+
   }
 }
 
