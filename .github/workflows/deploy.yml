@@ -1,0 +1,138 @@
+name: deploy
+
+# Pull requests run the tests only. The OIDC trust policy is pinned to
+# refs/heads/main, so a pull request cannot obtain AWS credentials at all
+# — that is the intent, not a limitation to work around.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  AWS_REGION: ap-southeast-1
+  ECR_REPOSITORY: wallet-balance-service
+  ECS_CLUSTER: wallet-cluster
+  ECS_SERVICE: wallet-balance-service
+  ECS_TASK_FAMILY: wallet-balance-service
+  CONTAINER_NAME: app
+
+# Read-only by default. The deploy job widens this for itself and nothing
+# else needs it.
+permissions:
+  contents: read
+
+# Two merges in quick succession would otherwise race to update the same
+# service. Later runs wait rather than cancel, because a half-finished
+# deployment should not be abandoned.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
+
+      # ci, not install: the lockfile is authoritative and the command
+      # fails if package.json and package-lock.json have drifted apart.
+      # Same reasoning as the Dockerfile.
+      - name: Install dependencies
+        run: npm ci
+
+      # No postgres service container is needed. index.js guards
+      # app.listen behind `require.main === module`, and the pool is built
+      # lazily in getPool(), which /health never calls — so the test suite
+      # opens no TCP connection to a database.
+      - name: Run tests
+        run: npm test
+
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write # required for GitHub to mint an OIDC token
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # No access keys are stored anywhere. GitHub mints a short-lived
+      # token, AWS validates it against the OIDC provider and the trust
+      # policy, and returns temporary credentials scoped to this role.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Tagged with the commit SHA, never :latest. A fixed tag would make
+      # every task definition revision identical, leaving ECS nothing to
+      # roll out, and would break the link from a running task back to a
+      # commit. The repository also rejects overwriting a tag.
+      - name: Build and push image
+        id: image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          IMAGE="$REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "uri=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      # A task definition cannot be edited in place — any change requires
+      # registering a new revision, so the current one is pulled fresh
+      # from AWS every run. It is never committed to the repository: a
+      # stale copy would silently overwrite whatever Terraform changed.
+      #
+      # DescribeTaskDefinition returns fields that RegisterTaskDefinition
+      # rejects, so they are stripped here.
+      - name: Download current task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "$ECS_TASK_FAMILY" \
+            --query taskDefinition \
+          | jq 'del(
+              .taskDefinitionArn,
+              .revision,
+              .status,
+              .requiresAttributes,
+              .compatibilities,
+              .registeredAt,
+              .registeredBy
+            )' > task-definition.json
+
+      # Runs entirely on the runner. Copies the definition and changes one
+      # field: the image. Everything else — environment, secrets, roles,
+      # cpu, memory, logging — is carried over untouched, which is why
+      # Terraform stays the owner of those.
+      - name: Render task definition
+        id: taskdef
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.image.outputs.uri }}
+
+      # Registers the new revision and points the service at it. Waiting
+      # for stability means the job fails if the new tasks cannot start,
+      # rather than reporting green while the rollout is broken.
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.taskdef.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
