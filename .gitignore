@@ -3,3 +3,12 @@ node_modules/
 *.tfstate
 *.tfstate.backup
 .terraform/
+
+# --- Terraform plan files ---
+tfplan
+*.tfplan
+
+# --- Local operator artifacts (ARNs, endpoints, account id) ---
+outputs.txt
+outputs.json
+*.log
