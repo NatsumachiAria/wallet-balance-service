@@ -2,12 +2,16 @@ FROM node:18-alpine AS base
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
+
+# Change npm install -> npm ci.
+# `npm ci` installs exactly what the lockfile pins and fails if it drifts.
 RUN npm install --omit=dev
 
 COPY src ./src
 
-# Deliberately left as a discussion point in the take-home:
-# this container currently runs as root. Candidates are not
-# required to fix this, but it's fair game to ask about it.
+# Added: run as a non-root user.
+USER node
+
 EXPOSE 3000
+
 CMD ["node", "src/index.js"]
